@@ -43,14 +43,46 @@ function hash(str) {
 class Pending {
     constructor( cb, err ){
         let count = 1;
+        try {
+            throw new Exception();
+        }catch(ex){
+            this.name = (ex.stack+"").split("\n")[2];
+        }
+
+        this.onTimeout = _=>{
+            console.log("Pending timeout:\n" + this.name);
+        };
+
+        this.timeout = setTimeout(this.onTimeout, 1000);
+
         this.done = done.bind(this);
-        this.start = _=>count++;
+
+        this.start = _=>{
+            count++;
+            if (!this.timeout) {
+                this.timeout = setTimeout(this.onTimeout, 1000);
+            }
+            if (this.verbose) {
+                console.log(this.verbose + ": " + count);
+            }
+        };
+
         this.error = err;
-        
+        this.verbose = null;
+
         function done(){
             count--;
-            if( !count )
+            if (this.verbose) {
+                console.log(this.verbose + ": " + count);
+            }
+            if( !count ){
+                clearTimeout(this.timeout);
+                this.timeout = 0;
                 cb();
+            }
+            if( count < 0 ){
+                console.log("Pending underflow");
+            }
         }
 
         setTimeout( this.done, 1 );
@@ -58,7 +90,9 @@ class Pending {
 
 }
 
-let nextBufferId = 1;
+window.Pending = Pending;
+
+let nextUniqueId = 1;
 class Buffer {
 
     constructor( killable ){
@@ -72,7 +106,7 @@ class Buffer {
         this.data = null;
         this.views = [];
         this.killable = killable;
-        this.id = nextBufferId++;
+        this.id = nextUniqueId++;
         this.pluginData = {};
         this.hash = 0;
         this.version = 1;
@@ -309,8 +343,11 @@ class Frame {
         let frame = this.leftFrame;
         if( !frame )
             frame = this.leftFrame = APP.createFrameInParent(parent, horizontal);
-        frame.remove();
-        parent.insertBefore( frame, currentFrame );
+        if (frame){
+            frame.remove();
+            if(parent)
+                parent.insertBefore( frame, currentFrame );
+        }
         this.currentFrame = currentFrame;
         let ret = APP.displayBufferInFrame( buffer, frame );
         return frame;
@@ -328,6 +365,8 @@ class Frame {
     }
 
     displayBufferInFrame( buffer, frame ){
+        if(window.headless)
+            return true;
 
         if( typeof buffer == "string" )
             buffer = DATA.buffers.find( b => b.name == buffer );
@@ -341,6 +380,8 @@ class Frame {
                 if( v.frame == frame ){
                     if(b == buffer){
                         found = true;
+                        if( v.view.reattach )
+                            v.view.reattach();
                         return;
                     }
                     v.frame = null;
@@ -365,6 +406,8 @@ class Frame {
         }else{
             let viewCandidate = { view:null, priority:-1 };
             APP.pollViewForBuffer( buffer, viewCandidate );
+            if(!viewCandidate.view)
+                return buffer;
             view = new viewCandidate.view( frame, buffer );
             let elements = [...frame.children];
             buffer.views.push({ view, elements, frame });
@@ -423,7 +466,6 @@ class Frame {
             APP.displayBuffer( buffer );
 
         return buffer;
-
     }
 
     
@@ -600,6 +642,8 @@ class Keys {
 
 class Chrome {
     constructor(){
+        if(document.body == document)
+            return;
         APP.add(this);
         this.customElements = [];
         this.el = document.querySelector(".menuContainer");
@@ -690,6 +734,8 @@ class Chrome {
 }
 
 const encoding = {};
+window.encoding = encoding;
+let isMaximized = false;
 
 class Core {
     
@@ -697,6 +743,19 @@ class Core {
         APP.add(this);
         this.plugins = {};
         this.resolveHnd = 0;
+    }
+
+    uniqueId(){
+        return nextUniqueId++;
+    }
+
+    toggleMaximized(){
+        if(isMaximized){
+            nw.Window.get().unmaximize();
+        } else {
+            nw.Window.get().maximize();
+        }
+        isMaximized = !isMaximized;
     }
 
     reload(){
@@ -807,6 +866,32 @@ class Core {
         }
     }
 
+    escape( s ){
+        if( !s )
+            return s;
+
+        if( typeof s == "string" )
+            return this.replaceDataInString(s).replace(/\\/g, "\\\\");
+
+        if( typeof s == "object" ){
+            if(Array.isArray(s)){
+                let r = [];
+                for(let i=0; i<s.length; ++i){
+                    r[i] = this.escape(s[i]);
+                }
+                return r;
+            } else {
+                let r = {};
+                for(let k in s){
+                    r[k] = this.escape(s[k]);
+                }
+                return r;
+            }
+        }
+
+        return s;
+    }
+
     replaceDataInString( f ){
         if( Array.isArray(f) )
             return f.map( s => this.replaceDataInString(s) );
@@ -821,18 +906,22 @@ class Core {
     }
 
     load( __script_path ){
-        /* */
-        let tag = document.createElement("script");
-        tag.src = "file://" + __script_path;
-        document.head.appendChild( tag );
-        /*/
-        try{
-            eval( fs.readFileSync( __script_path, "utf-8") );
-        }catch(ex){
-            console.log( "Could not read script ", __script_path, ": ", ex.message );
-            return false;
+        if (window.headless) {
+            include(__script_path);
+        } else {
+            /* */
+            let tag = document.createElement("script");
+            tag.src = "file://" + __script_path;
+            document.head.appendChild( tag );
+            /*/
+              try{
+              eval( fs.readFileSync( __script_path, "utf-8") );
+              }catch(ex){
+              console.log( "Could not read script ", __script_path, ": ", ex.message );
+              return false;
+              }
+              /* */
         }
-        /* */
 
         return true;
     }
@@ -856,6 +945,15 @@ class Core {
         });
         
         return true;
+    }
+
+    hasPendingPlugins(){
+        for(let name in this.plugins){
+            let plugin = this.plugins[name];
+            if(!plugin.loaded)
+                return true;
+        }
+        return false;
     }
 
     addPlugin(name, dependencies, cb){
@@ -893,6 +991,9 @@ class Core {
                     }
                 }
             }while(retry);
+
+            if(!this.hasPendingPlugins())
+                APP.onPluginsLoaded();
         }
     }
 
@@ -999,20 +1100,40 @@ class Core {
     }
 };
 
+window.Buffer = Buffer;
+window.fs = fs;
+
 (function(){
 
     new Core();
     new Keys();
     new Frame();
-    new Chrome();
+
+    if (!window.headless)
+        new Chrome();
 
     let isDerpy = process.platform == "darwin";
-    
+    let offset = -1;
+    let pathParts = process.argv[0].split( path.sep );
+
+    if( isDerpy ){
+        // /Applications/FemtoIDE.app/Contents/Versions/72.0.3626.109/nwjs Helper.app/Contents/MacOS/nwjs Helper
+        // /Applications/FemtoIDE-51.app/Contents/Frameworks/nwjs Framework.framework/Versions/88.0.4324.96/Helpers/nwjs Helper (Renderer).app/Contents/MacOS/nwjs Helper (Renderer)
+        if(pathParts[pathParts.length-1] == "nwjs Helper (Renderer)")
+            pathParts = pathParts.slice(0, -9);
+        else
+            pathParts = pathParts.slice(0, -6);
+        pathParts.push("Resources/app.nw");
+    } else {
+            pathParts = pathParts.slice(0, -1);
+    }
+
     importData({
-        appPath:process.argv[0].split( path.sep ).slice(0, isDerpy ? -6 : -1).join( path.sep ) + (isDerpy ? "/Resources/app.nw" : ""),
+        appPath:pathParts.join( path.sep ),
         buffers:[]
     });
 
     APP.load( DATA.appPath + path.sep + "config.js" );
 
 })();
+

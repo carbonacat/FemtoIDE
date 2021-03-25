@@ -278,7 +278,7 @@ APP.addPlugin("Tree", [], _=>{
             return [[{
                 className:"button",
                 text:(meta.label || "") + (meta.label&&meta.text?": ":"") + (meta.text || ""),
-                onclick:meta.cb,
+                onclick:meta.cb
             }]];
         }
 
@@ -320,6 +320,10 @@ APP.addPlugin("Tree", [], _=>{
                   ]]
                 ]
             );
+        }
+
+        _makeAction_boolean( meta ){
+            return this._makeAction_bool(meta);
         }
 
         _makeAction_bool( meta ){

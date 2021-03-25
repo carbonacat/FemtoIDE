@@ -4,6 +4,10 @@ APP.customSetVariables({
 });
 
 APP.bindKeys("global", {
+    "C--": APP.decreaseFontSize,
+    "C-=": APP.increaseFontSize,
+    "C-\t": APP.nextTab,
+    "C-S-\t": APP.previousTab,
     "C-w": APP.closeTab,
     "C-M-d": APP.disassemble,
     "M-h": APP.toggleHCPP,

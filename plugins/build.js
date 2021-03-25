@@ -7,7 +7,7 @@ APP.addPlugin("Build", ["Project"], _=>{
 
         constructor(){
             APP.add(this);
-            console.log("New builder");
+            // console.log("New builder");
         }
 
         onCloseProject(){
@@ -22,7 +22,7 @@ APP.addPlugin("Build", ["Project"], _=>{
         }
 
         onAfterWriteBuffer(buffer){
-            if( buildFiles && buildFiles.indexOf(buffer) == -1 && buffer.path.startsWith(DATA.projectPath)){
+            if( buildFiles && buildFiles.indexOf(buffer) == -1 && buffer.path && buffer.path.startsWith(DATA.projectPath)){
                 buildFiles.push(buffer);
             }
         }
@@ -162,6 +162,16 @@ APP.addPlugin("Build", ["Project"], _=>{
 
         onOpenProject(){
             new Build();
+        },
+
+        cleanCompile(){
+            APP.clean();
+            APP.compile();
+        },
+
+        cleanCompileRun(){
+            APP.clean();
+            APP.compileAndRun();
         },
 
         queryMenus(){
